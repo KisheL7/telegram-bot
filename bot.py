@@ -5,6 +5,7 @@ from PIL import Image
 import requests
 import io
 import os
+import asyncio
 
 # 🔑 WSTAW SWOJE NOWE KLUCZE
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
@@ -116,4 +117,11 @@ app.add_handler(MessageHandler(filters.TEXT, handle_text))
 
 print("Bot działa... wyślij zdjęcie na Telegramie 📸")
 
-app.run_polling()
+async def main():
+    await app.initialize()
+    await app.start()
+    await app.updater.start_polling()
+    await app.updater.idle()
+
+if __name__ == "__main__":
+    asyncio.run(main())
