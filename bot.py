@@ -5,7 +5,14 @@ from PIL import Image
 import requests
 import io
 import os
+import asyncio
 
+async def clear_webhook(app):
+    await app.bot.delete_webhook(drop_pending_updates=True)
+
+app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
+
+app.post_init = clear_webhook
 # 🔑 WSTAW SWOJE NOWE KLUCZE
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
