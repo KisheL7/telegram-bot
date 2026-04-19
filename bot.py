@@ -4,6 +4,7 @@ from telegram.ext import ApplicationBuilder, MessageHandler, filters, ContextTyp
 from PIL import Image
 import requests
 import io
+import os
 
 # 🔑 WSTAW SWOJE NOWE KLUCZE
 TELEGRAM_TOKEN = os.getenv("8621401229:AAHm92QD5EorrWJfOgD1V3GzwKQgeG5qXcs")
