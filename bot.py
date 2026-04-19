@@ -6,6 +6,8 @@ import requests
 import io
 import os
 
+print("TOKEN:", TELEGRAM_TOKEN)
+print("KEY:", GEMINI_API_KEY)
 # 🔑 WSTAW SWOJE NOWE KLUCZE
 TELEGRAM_TOKEN = os.getenv("8621401229:AAFpOrFS-rk5f38CB8DBhqkQiJyCxh717AA")
 GEMINI_API_KEY = os.getenv("AIzaSyAmabeo12f_gRSRzApxsJvMpTXaAQLQThM")
