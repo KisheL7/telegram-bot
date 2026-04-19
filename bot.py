@@ -7,8 +7,8 @@ import io
 import os
 
 # 🔑 WSTAW SWOJE NOWE KLUCZE
-TELEGRAM_TOKEN = os.getenv("8621401229:AAHm92QD5EorrWJfOgD1V3GzwKQgeG5qXcs")
-GEMINI_API_KEY = os.getenv("AIzaSyBmXHNJ_FerUl3idVCq0ztG9leHp9XTy30")
+TELEGRAM_TOKEN = os.getenv("8621401229:AAFpOrFS-rk5f38CB8DBhqkQiJyCxh717AA")
+GEMINI_API_KEY = os.getenv("AIzaSyAmabeo12f_gRSRzApxsJvMpTXaAQLQThM")
 
 # 🧠 klient Gemini
 client = genai.Client(api_key=GEMINI_API_KEY)
