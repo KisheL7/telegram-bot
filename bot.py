@@ -2,13 +2,11 @@ from google import genai
 from telegram import Update
 from telegram.ext import ApplicationBuilder, MessageHandler, filters, ContextTypes
 from PIL import Image
-import requests
 import io
 import os
 import time
-import asyncio
 
-# 🔑 ENV
+# 🔑 ENV (Render)
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
@@ -21,11 +19,11 @@ if not GEMINI_API_KEY:
 # 🧠 Gemini client
 client = genai.Client(api_key=GEMINI_API_KEY)
 
-# 📝 PROMPT (możesz później podmienić na swój pełny system)
+# 📝 PROMPT (Twój system – skrócony dla wydajności)
 PROMPT = """
-Rozpoznaj odpad na zdjęciu i przypisz do odpowiedniego kosza w Polsce.
+Rozpoznaj odpad na zdjęciu i przypisz do kosza w Polsce.
 
-Odpowiedz krótko w formacie:
+Odpowiedz:
 Rozpoznano: ...
 Śmietnik: ...
 """
@@ -34,36 +32,34 @@ Rozpoznano: ...
 def compress_image(image_bytes):
     img = Image.open(io.BytesIO(image_bytes))
     img.thumbnail((512, 512))
-
     if img.mode != "RGB":
         img = img.convert("RGB")
-
     output = io.BytesIO()
     img.save(output, format="JPEG", quality=70)
     return output.getvalue()
 
-# 📊 LIMITY
+# 📊 system limitów
 REQUEST_LIMIT = 20
 request_count = 0
 
 last_request = {}
 user_points = {}
 
-# 📸 obsługa zdjęcia
+# 📸 handler zdjęć
 async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     global request_count, last_request, user_points
 
     user_id = update.message.from_user.id
     now = time.time()
 
-    # 🚦 RATE LIMIT (1 sekunda)
+    # 🚦 anti-spam (1s per user)
     if user_id in last_request and now - last_request[user_id] < 1:
         await update.message.reply_text("Za szybko 📸 poczekaj chwilę")
         return
 
     last_request[user_id] = now
 
-    # 🧠 inicjalizacja punktów
+    # 🧠 init punktów
     if user_id not in user_points:
         user_points[user_id] = 0
 
@@ -75,6 +71,7 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     request_count += 1
 
     try:
+        # 📸 pobranie zdjęcia
         photo = update.message.photo[-1]
         file = await context.bot.get_file(photo.file_id)
 
@@ -83,9 +80,9 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         image = Image.open(io.BytesIO(compressed))
 
-        # 🧠 Gemini
+        # 🧠 Gemini request
         response = client.models.generate_content(
-            model="gemini-2.0-flash",
+            model="gemini-2.5-flash",
             contents=[PROMPT, image]
         )
 
@@ -101,9 +98,13 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         user_points[user_id] += gained_points
 
-        final_message = f"{text}\n\n🏆 Punkty: +{gained_points}\nSuma: {user_points[user_id]}"
+        # 💬 odpowiedź
+        final_message = (
+            f"{text}\n\n"
+            f"🏆 Punkty za zdjęcie: +{gained_points}\n"
+            f"📊 Suma: {user_points[user_id]}"
+        )
 
-        # 📏 limit Telegram
         MAX_LENGTH = 4000
         for i in range(0, len(final_message), MAX_LENGTH):
             await update.message.reply_text(final_message[i:i+MAX_LENGTH])
@@ -116,23 +117,19 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         else:
             await update.message.reply_text(f"Błąd: {error_msg[:1000]}")
 
-# 💬 fallback
+# 💬 tekst fallback
 async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("Wyślij zdjęcie odpadu 📸")
 
-# 🚀 START (Render-safe)
-async def main():
-    app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
+# 🚀 START APP (Render-safe)
+app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
 
-    # 🔥 kluczowe: reset webhooka (naprawia Conflict)
-    await app.bot.delete_webhook(drop_pending_updates=True)
+# 🔥 usuwa webhook (naprawia conflict)
+app.post_init = lambda app: app.bot.delete_webhook(drop_pending_updates=True)
 
-    app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
-    app.add_handler(MessageHandler(filters.TEXT, handle_text))
+app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
+app.add_handler(MessageHandler(filters.TEXT, handle_text))
 
-    print("Bot działa... wyślij zdjęcie na Telegramie 📸")
+print("Bot działa... wyślij zdjęcie 📸")
 
-    await app.run_polling()
-
-if __name__ == "__main__":
-    asyncio.run(main())
+app.run_polling()
