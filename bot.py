@@ -41,14 +41,14 @@ def compress(img_bytes):
 # 🎨 keyboard (instrukcja zamiast pętli)
 def photo_help_keyboard():
     return ReplyKeyboardMarkup(
-        [["📸 Jak zrobić zdjęcie?"]],
+        [["🙀 Jak zrobić 📸 zdjęcie?"]],
         resize_keyboard=True
     )
 
 # 🔁 inline restart (KLUCZ UX)
 def restart_keyboard():
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton("♻️ Sortuj dalej", callback_data="restart")]
+        [InlineKeyboardButton("♻️ Sortujemy dalej?", callback_data="restart")]
     ])
 
 # ▶️ START SCREEN
@@ -109,7 +109,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if "jak zrobić" in text:
         await update.message.reply_text(
-            "📸 Kliknij 📎 (agrafkę) → wybierz zdjęcie → wyślij",
+            "Kliknij 📎 agrafkę i wybierz zdjęcie lub zrób nowe 😺",
             reply_markup=photo_help_keyboard()
         )
     else:
