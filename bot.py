@@ -41,7 +41,7 @@ def compress(img_bytes):
 # 🎨 keyboard (instrukcja zamiast pętli)
 def photo_help_keyboard():
     return ReplyKeyboardMarkup(
-        [["🙀 Jak zrobić 📸 zdjęcie?"]],
+        [["🙀 Jak zrobić zdjęcie?"]],
         resize_keyboard=True
     )
 
@@ -109,7 +109,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if "jak zrobić" in text:
         await update.message.reply_text(
-            "Kliknij 📎 agrafkę i wybierz zdjęcie lub zrób nowe 😺",
+            "😺 Kliknij 📎 agrafkę i pokaż mi swój odpad",
             reply_markup=photo_help_keyboard()
         )
     else:
