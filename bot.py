@@ -10,54 +10,34 @@ import time
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
-if not TELEGRAM_TOKEN:
-    raise ValueError("Brak TELEGRAM_TOKEN w ENV")
-
-if not GEMINI_API_KEY:
-    raise ValueError("Brak GEMINI_API_KEY w ENV")
-
-# 🧠 AI client
 client = genai.Client(api_key=GEMINI_API_KEY)
 
-# 🎯 MAPA UI (KOD decyduje o kolorze, nie AI)
-EMOJI_MAP = {
-    "ŻÓŁTY": "🟡🗑️",
-    "NIEBIESKI": "🔵🗑️",
-    "ZIELONY": "🟢🗑️",
-    "BRĄZOWY": "🟤🗑️",
-    "CZARNY": "⚫🗑️",
-    "PSZOK": "🏷️🗑️"
+# 🧠 MAPA KOSZY (UI)
+BINS = {
+    "ŻÓŁTY": "🟡🗑️ Kosz ŻÓŁTY",
+    "NIEBIESKI": "🔵🗑️ Kosz NIEBIESKI",
+    "ZIELONY": "🟢🗑️ Kosz ZIELONY",
+    "BRĄZOWY": "🟤🗑️ Kosz BRĄZOWY",
+    "CZARNY": "⚫🗑️ Kosz CZARNY",
+    "PSZOK": "🏷️🗑️ PSZOK"
 }
 
-# 🚨 twarde reguły override (deterministyczne bezpieczeństwo)
-FORCE_PSZOK = ["kapcie", "tekstyl", "bateria", "elektron", "flosser", "lek", "igła"]
+FORCE_PSZOK = ["kapcie", "tekstyl", "bateria", "elektron", "flosser"]
 
-# ⚡ PROMPT (AI tylko sugeruje, NIE decyduje UI)
+# ⏱️ sesje (symulacja „uśpienia”)
+SESSION_TIMEOUT = 900  # 15 min
+last_activity = {}
+
+# ⚡ PROMPT (AI tylko klasyfikuje)
 PROMPT = """
-Jesteś klasyfikatorem odpadów.
-
-Zwracasz TYLKO:
-
-FRACJA: jedna z [ŻÓŁTY, NIEBIESKI, ZIELONY, BRĄZOWY, CZARNY, PSZOK]
-UZASADNIENIE: jedna linia
+Zwróć:
+KOSZ: [ŻÓŁTY/NIEBIESKI/ZIELONY/BRĄZOWY/CZARNY/PSZOK]
+OPIS: krótko co to jest
 
 Zasady:
 - niepewne = CZARNY
-- tekstylia i elektronika = PSZOK
-- nie zgadujesz poza listą
+- tekstylia/elektronika = PSZOK
 """
-
-# 🔥 warmup
-def warmup():
-    try:
-        client.models.generate_content(
-            model="gemini-2.5-flash",
-            contents="test"
-        )
-    except:
-        pass
-
-warmup()
 
 # 📦 image compress
 def compress_image(image_bytes):
@@ -69,13 +49,6 @@ def compress_image(image_bytes):
     img.save(out, format="JPEG", quality=60)
     return out.getvalue()
 
-# 📊 state
-REQUEST_LIMIT = 20
-request_count = 0
-
-last_request = {}
-user_points = {}
-
 # 🎨 UI
 def keyboard():
     return ReplyKeyboardMarkup(
@@ -83,51 +56,53 @@ def keyboard():
         resize_keyboard=True
     )
 
+# 🟢 START SCREEN (premium UX)
+def start_screen():
+    return (
+        "♻️ *Sortly*\n\n"
+        "Zrób zdjęcie odpadu,\n"
+        "a powiem Ci gdzie go wyrzucić.\n\n"
+        "👇 Kliknij przycisk poniżej"
+    )
+
+# 🔁 reset sesji
+def reset_if_needed(user_id):
+    now = time.time()
+    if user_id in last_activity:
+        if now - last_activity[user_id] > SESSION_TIMEOUT:
+            return True
+    return False
+
+# ▶️ START / RESET UX
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.message.from_user.id
+    last_activity[user_id] = time.time()
+
     await update.message.reply_text(
-        "♻️ *Sortly*\n\nZrób zdjęcie odpadu, a powiem gdzie go wyrzucić.",
+        start_screen(),
         reply_markup=keyboard(),
         parse_mode="Markdown"
     )
 
-# 🧠 parsing AI → deterministic override
-def parse_result(raw: str):
+# 🧠 parse AI → final UI
+def parse_ai(raw: str):
     raw_lower = raw.lower()
 
-    # FORCE PSZOK override
     if any(x in raw_lower for x in FORCE_PSZOK):
         return "PSZOK", raw
 
-    # extract frakcja
-    for key in EMOJI_MAP.keys():
-        if key in raw:
-            return key, raw
+    for k in BINS.keys():
+        if k in raw:
+            return k, raw
 
     return "CZARNY", raw
 
-# 📸 handler
+# 📸 PHOTO HANDLER
 async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    global request_count, last_request, user_points
-
     user_id = update.message.from_user.id
-    now = time.time()
+    last_activity[user_id] = time.time()
 
-    if user_id in last_request and now - last_request[user_id] < 1:
-        await update.message.reply_text("⏳ chwila...")
-        return
-
-    last_request[user_id] = now
-
-    if user_id not in user_points:
-        user_points[user_id] = 0
-
-    if request_count >= REQUEST_LIMIT:
-        await update.message.reply_text("🚫 limit osiągnięty")
-        return
-
-    request_count += 1
-
-    msg = await update.message.reply_text("🔍 Analizuję...")
+    msg = await update.message.reply_text("🔍 Analizuję zdjęcie...")
 
     try:
         photo = update.message.photo[-1]
@@ -151,27 +126,22 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
             }
         )
 
-        raw = response.text or ""
+        kosz, opis = parse_ai(response.text or "")
 
-        frakcja, raw_text = parse_result(raw)
-        emoji = EMOJI_MAP[frakcja]
-
-        gained = 10 if frakcja == "PSZOK" else 5
-
-        user_points[user_id] += gained
-
-        final = (
-            f"{emoji} FRACJA: {frakcja}\n\n"
-            f"{raw_text}\n\n"
-            f"🏆 +{gained} pkt | 📊 {user_points[user_id]}"
+        # 🧠 clean UX (bez FRACJA, bez śmieci)
+        result = (
+            "✅ Gotowe\n\n"
+            f"{BINS[kosz]}\n"
+            f"{opis}\n\n"
+            "🌱 Dziękujemy za segregację"
         )
 
-        await msg.edit_text(final)
+        await msg.edit_text(result)
 
     except Exception:
-        await msg.edit_text("⚠️ błąd analizy")
+        await msg.edit_text("⚠️ Nie udało się rozpoznać odpadu")
 
-# 💬 fallback (usuwa potrzebę /start UX-wise)
+# 💬 TEXT → działa jak start (UX fix)
 async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await start(update, context)
 
@@ -185,5 +155,4 @@ app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
 app.add_handler(MessageHandler(filters.TEXT, handle_text))
 
 print("Bot działa 🚀")
-
 app.run_polling()
