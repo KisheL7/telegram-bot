@@ -1,12 +1,12 @@
 from google import genai
-from telegram import Update
+from telegram import Update, ReplyKeyboardMarkup
 from telegram.ext import ApplicationBuilder, MessageHandler, CommandHandler, filters, ContextTypes
 from PIL import Image
 import io
 import os
 import time
 
-# 🔑 ENV (Render)
+# 🔑 ENV
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
@@ -16,25 +16,20 @@ if not TELEGRAM_TOKEN:
 if not GEMINI_API_KEY:
     raise ValueError("Brak GEMINI_API_KEY w ENV")
 
-# 🧠 Gemini client
+# 🧠 Gemini
 client = genai.Client(api_key=GEMINI_API_KEY)
 
-# ⚡ KRÓTSZY PROMPT
+# ⚡ PROMPT (lekki + stabilny)
 PROMPT = """
-Jesteś asystentem segregacji odpadów w Polsce (5 frakcji).
-
-Rozpoznaj odpad i podaj właściwy kosz.
-
-Jeśli:
-- człowiek/zwierzę → "To jest istota żywa..."
-- niewyraźne → "Zdjęcie jest niewyraźne..."
-- mieszanka → poproś o jeden typ odpadu
+Rozpoznaj odpad i wskaż właściwy kosz (Polska).
 
 Frakcje:
 ŻÓŁTY, NIEBIESKI, ZIELONY, BRĄZOWY, CZARNY, PSZOK
 
-Dodaj emoji kosza:
-🟡🗑️ 🔵🗑️ 🟢🗑️ 🟤🗑️ ⚫🗑️ 🏷️🗑️
+Zasady:
+- człowiek/zwierzę → "To jest istota żywa..."
+- niewyraźne → "Zdjęcie jest niewyraźne..."
+- mieszanka → poproś o jeden typ odpadu
 
 Format:
 Rozpoznano: ...
@@ -44,7 +39,7 @@ Rozpoznano: ...
 Max 5 linii.
 """
 
-# 🔥 WARMUP
+# 🔥 warmup
 def warmup():
     try:
         client.models.generate_content(
@@ -56,7 +51,7 @@ def warmup():
 
 warmup()
 
-# 📦 kompresja obrazu
+# 📦 kompresja
 def compress_image(image_bytes):
     img = Image.open(io.BytesIO(image_bytes))
     img.thumbnail((384, 384))
@@ -66,27 +61,59 @@ def compress_image(image_bytes):
     img.save(output, format="JPEG", quality=60)
     return output.getvalue()
 
-# 📊 limity
+# 📊 stan
 REQUEST_LIMIT = 20
 request_count = 0
 
 last_request = {}
 user_points = {}
 
-# ▶️ /start
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("Wyślij zdjęcie odpadu 📸")
+# 🎨 UI helpery
+def main_keyboard():
+    return ReplyKeyboardMarkup(
+        [["📸 Zrób zdjęcie"]],
+        resize_keyboard=True
+    )
 
-# 📸 handler zdjęć
+def welcome_text():
+    return (
+        "♻️ *Sortly*\n\n"
+        "Zrób zdjęcie odpadu,\n"
+        "a pokażę Ci gdzie go wyrzucić.\n\n"
+        "👇 Zacznij poniżej"
+    )
+
+def processing_text():
+    return (
+        "🔍 *Analizuję zdjęcie...*\n"
+        "_To zajmie chwilę_"
+    )
+
+def format_result(text, points, total):
+    return (
+        f"✅ *Gotowe*\n\n"
+        f"{text}\n\n"
+        f"🏆 +{points} pkt\n"
+        f"📊 Razem: {total}"
+    )
+
+# ▶️ START
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text(
+        welcome_text(),
+        reply_markup=main_keyboard(),
+        parse_mode="Markdown"
+    )
+
+# 📸 FOTO
 async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     global request_count, last_request, user_points
 
     user_id = update.message.from_user.id
     now = time.time()
 
-    # 🚦 anti-spam
     if user_id in last_request and now - last_request[user_id] < 1:
-        await update.message.reply_text("Za szybko 📸 poczekaj chwilę")
+        await update.message.reply_text("⏳ Spokojnie... sekunda 😄")
         return
 
     last_request[user_id] = now
@@ -95,23 +122,23 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         user_points[user_id] = 0
 
     if request_count >= REQUEST_LIMIT:
-        await update.message.reply_text("Dzisiejszy limit zapytań osiągnięty 🚫")
+        await update.message.reply_text("🚫 Limit osiągnięty. Spróbuj później")
         return
 
     request_count += 1
 
-    # ⚡ jedna wiadomość UX
-    processing_msg = await update.message.reply_text("Analizuję zdjęcie... ♻️")
+    msg = await update.message.reply_text(
+        processing_text(),
+        parse_mode="Markdown"
+    )
 
     try:
-        # 📸 pobranie zdjęcia
         photo = update.message.photo[-1]
         file = await context.bot.get_file(photo.file_id)
 
         img_bytes = await file.download_as_bytearray()
         compressed = compress_image(img_bytes)
 
-        # 🔥 POPRAWIONE WYWOŁANIE GEMINI
         response = client.models.generate_content(
             model="gemini-2.5-flash",
             contents={
@@ -129,47 +156,43 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         text = response.text or "Brak odpowiedzi"
 
-        # 🏆 punkty
-        gained_points = 0
-
+        gained = 0
         if "PSZOK" in text:
-            gained_points = 10
+            gained = 10
         elif any(x in text for x in ["ŻÓŁTY", "NIEBIESKI", "ZIELONY", "BRĄZOWY", "CZARNY"]):
-            gained_points = 5
+            gained = 5
 
-        user_points[user_id] += gained_points
+        user_points[user_id] += gained
 
-        final_message = (
-            f"{text}\n\n"
-            f"🏆 Punkty za zdjęcie: +{gained_points}\n"
-            f"📊 Suma: {user_points[user_id]}"
+        await msg.edit_text(
+            format_result(text, gained, user_points[user_id]),
+            parse_mode="Markdown"
         )
 
-        await processing_msg.edit_text(final_message)
-
     except Exception as e:
-        error_msg = str(e)
+        await msg.edit_text(
+            "⚠️ Coś poszło nie tak\nSpróbuj jeszcze raz",
+            parse_mode="Markdown"
+        )
 
-        if "429" in error_msg or "RESOURCE_EXHAUSTED" in error_msg:
-            await processing_msg.edit_text("Limit API osiągnięty ⏳ Spróbuj za chwilę")
-        else:
-            await processing_msg.edit_text(f"Błąd: {error_msg[:500]}")
-
-# 💬 fallback tekst
+# 💬 TEKST
 async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("Wyślij zdjęcie odpadu 📸")
+    text = update.message.text.lower()
 
-# 🚀 START APP
+    if "zdjęcie" in text:
+        await update.message.reply_text("📸 Super — wyślij zdjęcie odpadu")
+    else:
+        await start(update, context)
+
+# 🚀 APP
 app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
 
-# 🔥 usuwa webhook (Render fix)
 app.post_init = lambda app: app.bot.delete_webhook(drop_pending_updates=True)
 
-# 📌 handlery
 app.add_handler(CommandHandler("start", start))
 app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
 app.add_handler(MessageHandler(filters.TEXT, handle_text))
 
-print("Bot działa... wyślij zdjęcie 📸")
+print("Bot działa 🚀")
 
 app.run_polling()
