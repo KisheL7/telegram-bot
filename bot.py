@@ -123,4 +123,8 @@ app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
 app.add_handler(MessageHandler(filters.TEXT, handle_text))
 app.add_handler(CallbackQueryHandler(restart, pattern="restart"))
 
+async def on_startup(app):
+    print("Bot działa 🚀")
+
+app.post_init = on_startup
 app.run_polling()
