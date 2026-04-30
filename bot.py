@@ -48,7 +48,7 @@ Max 5 linii.
 def warmup():
     try:
         client.models.generate_content(
-            model="gemini-2.0-flash",
+            model="gemini-2.5-flash",
             contents="test"
         )
     except:
