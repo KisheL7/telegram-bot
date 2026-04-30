@@ -19,7 +19,7 @@ if not GEMINI_API_KEY:
 # 🧠 Gemini client
 client = genai.Client(api_key=GEMINI_API_KEY)
 
-# ⚡ KRÓTSZY PROMPT (szybkość)
+# ⚡ KRÓTSZY PROMPT
 PROMPT = """
 Jesteś asystentem segregacji odpadów w Polsce (5 frakcji).
 
@@ -44,7 +44,7 @@ Rozpoznano: ...
 Max 5 linii.
 """
 
-# 🔥 WARMUP (zmniejsza cold start API)
+# 🔥 WARMUP
 def warmup():
     try:
         client.models.generate_content(
@@ -100,7 +100,7 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     request_count += 1
 
-    # ⚡ jedna wiadomość (lepszy UX)
+    # ⚡ jedna wiadomość UX
     processing_msg = await update.message.reply_text("Analizuję zdjęcie... ♻️")
 
     try:
@@ -111,9 +111,9 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         img_bytes = await file.download_as_bytearray()
         compressed = compress_image(img_bytes)
 
-        # 🔥 POPRAWIONE WYWOŁANIE GEMINI (bez błędu!)
+        # 🔥 POPRAWIONE WYWOŁANIE GEMINI
         response = client.models.generate_content(
-            model="gemini-2.0-flash",
+            model="gemini-2.5-flash",
             contents={
                 "parts": [
                     {"text": PROMPT},
@@ -145,7 +145,6 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"📊 Suma: {user_points[user_id]}"
         )
 
-        # ✏️ edycja zamiast drugiej wiadomości
         await processing_msg.edit_text(final_message)
 
     except Exception as e:
