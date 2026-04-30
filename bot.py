@@ -19,7 +19,7 @@ if not GEMINI_API_KEY:
 # 🧠 Gemini client
 client = genai.Client(api_key=GEMINI_API_KEY)
 
-# ⚡ KRÓTSZY PROMPT (szybszy)
+# ⚡ KRÓTSZY PROMPT (szybkość)
 PROMPT = """
 Jesteś asystentem segregacji odpadów w Polsce (5 frakcji).
 
@@ -44,7 +44,7 @@ Rozpoznano: ...
 Max 5 linii.
 """
 
-# 🔥 WARMUP (przy starcie – zmniejsza cold start API)
+# 🔥 WARMUP (zmniejsza cold start API)
 def warmup():
     try:
         client.models.generate_content(
@@ -56,10 +56,10 @@ def warmup():
 
 warmup()
 
-# 📦 kompresja obrazu (szybsza)
+# 📦 kompresja obrazu
 def compress_image(image_bytes):
     img = Image.open(io.BytesIO(image_bytes))
-    img.thumbnail((384, 384))  # mniejsze = szybciej
+    img.thumbnail((384, 384))
     if img.mode != "RGB":
         img = img.convert("RGB")
     output = io.BytesIO()
@@ -73,7 +73,7 @@ request_count = 0
 last_request = {}
 user_points = {}
 
-# ▶️ /start — kluczowe UX na demo
+# ▶️ /start
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("Wyślij zdjęcie odpadu 📸")
 
@@ -100,8 +100,8 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     request_count += 1
 
-    # ⚡ natychmiastowy feedback (ważne UX)
-    await update.message.reply_text("Analizuję zdjęcie... ♻️")
+    # ⚡ jedna wiadomość (lepszy UX)
+    processing_msg = await update.message.reply_text("Analizuję zdjęcie... ♻️")
 
     try:
         # 📸 pobranie zdjęcia
@@ -111,13 +111,20 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         img_bytes = await file.download_as_bytearray()
         compressed = compress_image(img_bytes)
 
-        # ⚡ szybsze wywołanie (bez PIL -> Gemini)
+        # 🔥 POPRAWIONE WYWOŁANIE GEMINI (bez błędu!)
         response = client.models.generate_content(
             model="gemini-2.0-flash",
-            contents=[
-                PROMPT,
-                {"mime_type": "image/jpeg", "data": compressed}
-            ]
+            contents={
+                "parts": [
+                    {"text": PROMPT},
+                    {
+                        "inline_data": {
+                            "mime_type": "image/jpeg",
+                            "data": compressed
+                        }
+                    }
+                ]
+            }
         )
 
         text = response.text or "Brak odpowiedzi"
@@ -138,17 +145,16 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"📊 Suma: {user_points[user_id]}"
         )
 
-        MAX_LENGTH = 4000
-        for i in range(0, len(final_message), MAX_LENGTH):
-            await update.message.reply_text(final_message[i:i+MAX_LENGTH])
+        # ✏️ edycja zamiast drugiej wiadomości
+        await processing_msg.edit_text(final_message)
 
     except Exception as e:
         error_msg = str(e)
 
         if "429" in error_msg or "RESOURCE_EXHAUSTED" in error_msg:
-            await update.message.reply_text("Limit API osiągnięty ⏳ Spróbuj za chwilę")
+            await processing_msg.edit_text("Limit API osiągnięty ⏳ Spróbuj za chwilę")
         else:
-            await update.message.reply_text(f"Błąd: {error_msg[:1000]}")
+            await processing_msg.edit_text(f"Błąd: {error_msg[:500]}")
 
 # 💬 fallback tekst
 async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -157,7 +163,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # 🚀 START APP
 app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
 
-# 🔥 usuwa webhook (ważne na Render)
+# 🔥 usuwa webhook (Render fix)
 app.post_init = lambda app: app.bot.delete_webhook(drop_pending_updates=True)
 
 # 📌 handlery
