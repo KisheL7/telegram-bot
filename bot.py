@@ -16,27 +16,35 @@ if not TELEGRAM_TOKEN:
 if not GEMINI_API_KEY:
     raise ValueError("Brak GEMINI_API_KEY w ENV")
 
-# 🧠 Gemini
+# 🧠 AI client
 client = genai.Client(api_key=GEMINI_API_KEY)
 
-# ⚡ PROMPT (lekki + stabilny)
-PROMPT = """
-Rozpoznaj odpad i wskaż właściwy kosz (Polska).
+# 🎯 MAPA UI (KOD decyduje o kolorze, nie AI)
+EMOJI_MAP = {
+    "ŻÓŁTY": "🟡🗑️",
+    "NIEBIESKI": "🔵🗑️",
+    "ZIELONY": "🟢🗑️",
+    "BRĄZOWY": "🟤🗑️",
+    "CZARNY": "⚫🗑️",
+    "PSZOK": "🏷️🗑️"
+}
 
-Frakcje:
-ŻÓŁTY, NIEBIESKI, ZIELONY, BRĄZOWY, CZARNY, PSZOK
+# 🚨 twarde reguły override (deterministyczne bezpieczeństwo)
+FORCE_PSZOK = ["kapcie", "tekstyl", "bateria", "elektron", "flosser", "lek", "igła"]
+
+# ⚡ PROMPT (AI tylko sugeruje, NIE decyduje UI)
+PROMPT = """
+Jesteś klasyfikatorem odpadów.
+
+Zwracasz TYLKO:
+
+FRACJA: jedna z [ŻÓŁTY, NIEBIESKI, ZIELONY, BRĄZOWY, CZARNY, PSZOK]
+UZASADNIENIE: jedna linia
 
 Zasady:
-- człowiek/zwierzę → "To jest istota żywa..."
-- niewyraźne → "Zdjęcie jest niewyraźne..."
-- mieszanka → poproś o jeden typ odpadu
-
-Format:
-Rozpoznano: ...
-🟡🗑️ Śmietnik: ...
-🌱 Dziękujemy za segregację
-
-Max 5 linii.
+- niepewne = CZARNY
+- tekstylia i elektronika = PSZOK
+- nie zgadujesz poza listą
 """
 
 # 🔥 warmup
@@ -51,61 +59,53 @@ def warmup():
 
 warmup()
 
-# 📦 kompresja
+# 📦 image compress
 def compress_image(image_bytes):
     img = Image.open(io.BytesIO(image_bytes))
     img.thumbnail((384, 384))
     if img.mode != "RGB":
         img = img.convert("RGB")
-    output = io.BytesIO()
-    img.save(output, format="JPEG", quality=60)
-    return output.getvalue()
+    out = io.BytesIO()
+    img.save(out, format="JPEG", quality=60)
+    return out.getvalue()
 
-# 📊 stan
+# 📊 state
 REQUEST_LIMIT = 20
 request_count = 0
 
 last_request = {}
 user_points = {}
 
-# 🎨 UI helpery
-def main_keyboard():
+# 🎨 UI
+def keyboard():
     return ReplyKeyboardMarkup(
         [["📸 Zrób zdjęcie"]],
         resize_keyboard=True
     )
 
-def welcome_text():
-    return (
-        "♻️ *Sortly*\n\n"
-        "Zrób zdjęcie odpadu,\n"
-        "a pokażę Ci gdzie go wyrzucić.\n\n"
-        "👇 Zacznij poniżej"
-    )
-
-def processing_text():
-    return (
-        "🔍 *Analizuję zdjęcie...*\n"
-        "_To zajmie chwilę_"
-    )
-
-def format_result(text, points, total):
-    return (
-        f"✅ *Gotowe*\n\n"
-        f"{text}\n\n"
-        f"🏆 +{points} pkt\n"
-        f"📊 Razem: {total}"
-    )
-
-# ▶️ START
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
-        welcome_text(),
-        reply_markup=main_keyboard(),
+        "♻️ *Sortly*\n\nZrób zdjęcie odpadu, a powiem gdzie go wyrzucić.",
+        reply_markup=keyboard(),
         parse_mode="Markdown"
     )
 
-# 📸 FOTO
+# 🧠 parsing AI → deterministic override
+def parse_result(raw: str):
+    raw_lower = raw.lower()
+
+    # FORCE PSZOK override
+    if any(x in raw_lower for x in FORCE_PSZOK):
+        return "PSZOK", raw
+
+    # extract frakcja
+    for key in EMOJI_MAP.keys():
+        if key in raw:
+            return key, raw
+
+    return "CZARNY", raw
+
+# 📸 handler
 async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     global request_count, last_request, user_points
 
@@ -113,7 +113,7 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     now = time.time()
 
     if user_id in last_request and now - last_request[user_id] < 1:
-        await update.message.reply_text("⏳ Spokojnie... sekunda 😄")
+        await update.message.reply_text("⏳ chwila...")
         return
 
     last_request[user_id] = now
@@ -122,15 +122,12 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         user_points[user_id] = 0
 
     if request_count >= REQUEST_LIMIT:
-        await update.message.reply_text("🚫 Limit osiągnięty. Spróbuj później")
+        await update.message.reply_text("🚫 limit osiągnięty")
         return
 
     request_count += 1
 
-    msg = await update.message.reply_text(
-        processing_text(),
-        parse_mode="Markdown"
-    )
+    msg = await update.message.reply_text("🔍 Analizuję...")
 
     try:
         photo = update.message.photo[-1]
@@ -154,35 +151,29 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
             }
         )
 
-        text = response.text or "Brak odpowiedzi"
+        raw = response.text or ""
 
-        gained = 0
-        if "PSZOK" in text:
-            gained = 10
-        elif any(x in text for x in ["ŻÓŁTY", "NIEBIESKI", "ZIELONY", "BRĄZOWY", "CZARNY"]):
-            gained = 5
+        frakcja, raw_text = parse_result(raw)
+        emoji = EMOJI_MAP[frakcja]
+
+        gained = 10 if frakcja == "PSZOK" else 5
 
         user_points[user_id] += gained
 
-        await msg.edit_text(
-            format_result(text, gained, user_points[user_id]),
-            parse_mode="Markdown"
+        final = (
+            f"{emoji} FRACJA: {frakcja}\n\n"
+            f"{raw_text}\n\n"
+            f"🏆 +{gained} pkt | 📊 {user_points[user_id]}"
         )
 
-    except Exception as e:
-        await msg.edit_text(
-            "⚠️ Coś poszło nie tak\nSpróbuj jeszcze raz",
-            parse_mode="Markdown"
-        )
+        await msg.edit_text(final)
 
-# 💬 TEKST
+    except Exception:
+        await msg.edit_text("⚠️ błąd analizy")
+
+# 💬 fallback (usuwa potrzebę /start UX-wise)
 async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    text = update.message.text.lower()
-
-    if "zdjęcie" in text:
-        await update.message.reply_text("📸 Super — wyślij zdjęcie odpadu")
-    else:
-        await start(update, context)
+    await start(update, context)
 
 # 🚀 APP
 app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
